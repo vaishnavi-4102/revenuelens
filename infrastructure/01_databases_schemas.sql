@@ -18,7 +18,6 @@ CREATE DATABASE IF NOT EXISTS RL_QA
 CREATE DATABASE IF NOT EXISTS RL_PROD
     COMMENT = 'RevenueLens - production environment (deployed on tagged release)';
 
--- Schemas: identical layer set in every environment.
 CREATE SCHEMA IF NOT EXISTS RL_DEV.RAW;
 CREATE SCHEMA IF NOT EXISTS RL_DEV.STAGING;
 CREATE SCHEMA IF NOT EXISTS RL_DEV.INTERMEDIATE;
