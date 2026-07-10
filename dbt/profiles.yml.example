@@ -1,0 +1,54 @@
+# Copy to ~/.dbt/profiles.yml (or set DBT_PROFILES_DIR) and fill in via
+# environment variables -- never commit real credentials. Airflow and CI use
+# the same env-var names via their own secret stores (Airflow connection /
+# GitHub Actions secrets), so this file is the single source of truth for
+# which variables are required.
+#
+# database is the only thing that changes per environment (RL_DEV/RL_QA/
+# RL_PROD) -- schema is deliberately a placeholder because
+# macros/generate_schema_name.sql ignores target.schema for every model in
+# this project (every model sets an explicit +schema for its layer).
+revenuelens:
+  target: dev
+  outputs:
+
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      # Prefer key-pair auth for any non-interactive user (Airflow, CI).
+      # Password auth shown here for local dev convenience only.
+      password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
+      private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      role: RL_TRANSFORMER
+      database: RL_DEV
+      warehouse: RL_TRANSFORMING_WH
+      schema: DBT_DEFAULT
+      threads: 4
+
+    qa:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
+      private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      role: RL_TRANSFORMER
+      database: RL_QA
+      warehouse: RL_TRANSFORMING_WH
+      schema: DBT_DEFAULT
+      threads: 4
+
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
+      private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      role: RL_TRANSFORMER
+      database: RL_PROD
+      warehouse: RL_TRANSFORMING_WH
+      schema: DBT_DEFAULT
+      threads: 8

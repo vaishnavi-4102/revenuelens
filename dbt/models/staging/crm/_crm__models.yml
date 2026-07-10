@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: stg_crm__accounts
+    description: Source-conformed accounts, one row per account. No dedup applied -- unique(account_id) is a tripwire for unexpected duplicate loads.
+    columns:
+      - name: account_id
+        tests: [not_null, unique]
+      - name: region
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['US', 'EU', 'IN']
+      - name: currency
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['USD', 'EUR', 'INR']
+
+  - name: stg_crm__contracts
+    description: Source-conformed contract version history, one row per (contract_id, version_number). No dedup applied -- unique(contract_version_sk) is a tripwire for unexpected duplicate loads.
+    columns:
+      - name: contract_version_sk
+        tests: [not_null, unique]
+      - name: contract_id
+        tests: [not_null]
+      - name: account_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_crm__accounts')
+                field: account_id
+      - name: arr_amount
+        tests: [not_null]
+      - name: amendment_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['new', 'upsell', 'downgrade', 'renewal', 'currency_change', 'churn']

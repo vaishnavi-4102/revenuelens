@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: stg_customer__customer_master
+    description: Source-conformed customer master version history, one row per (account_id, version). PII columns pass through unmasked here -- masking is applied at the mart layer via Snowflake dynamic data masking, not in dbt SQL.
+    columns:
+      - name: customer_master_sk
+        tests: [not_null, unique]
+      - name: account_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_crm__accounts')
+                field: account_id
+      - name: customer_master_version
+        tests: [not_null]

@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: stg_erp__gl_journal_entries
+    description: Source-conformed GL journal entry lines. reference_id renamed to invoice_id since every line in this synthetic ledger traces back to a billing invoice.
+    columns:
+      - name: je_id
+        tests: [not_null, unique]
+      - name: debit_credit
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['DEBIT', 'CREDIT']
+      - name: je_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['AUTO_INVOICE', 'AUTO_PAYMENT', 'MANUAL_ADJUSTMENT']
+      - name: invoice_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_billing__invoices')
+                field: invoice_id

@@ -1,0 +1,77 @@
+version: 2
+
+sources:
+  - name: crm
+    description: Salesforce-like CRM extract -- accounts and contract version history, landed by the Airflow CRM ingestion DAG.
+    schema: RAW
+    config:
+      loaded_at_field: _loaded_at
+      freshness:
+        warn_after: {count: 30, period: hour}
+        error_after: {count: 48, period: hour}
+
+    tables:
+      - name: accounts
+        description: One row per account (customer). Rarely re-loaded once created.
+        columns:
+          - name: account_id
+            description: Natural key, e.g. ACC-000001.
+            tests: [not_null, unique]
+          - name: account_name
+            tests: [not_null]
+          - name: region
+            description: "One of: US, EU, IN."
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['US', 'EU', 'IN']
+          - name: legal_entity
+            tests: [not_null]
+          - name: currency
+            description: Account's default billing currency.
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['USD', 'EUR', 'INR']
+          - name: segment
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['SMB', 'Mid-Market', 'Enterprise']
+          - name: industry
+          - name: created_date
+            tests: [not_null]
+
+      - name: contracts
+        description: One row per contract version (original signature or amendment). SCD2 history lives here; a full point-in-time contract state is (contract_id, version_number).
+        columns:
+          - name: contract_id
+            tests: [not_null]
+          - name: version_number
+            tests: [not_null]
+          - name: account_id
+            tests: [not_null]
+          - name: effective_start_date
+            tests: [not_null]
+          - name: effective_end_date
+            description: Nullable -- an open-ended contract has no end date yet.
+          - name: arr_amount
+            tests: [not_null]
+          - name: currency
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['USD', 'EUR', 'INR']
+          - name: seats
+          - name: plan_tier
+          - name: amendment_type
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['new', 'upsell', 'downgrade', 'renewal', 'currency_change', 'churn']
+          - name: created_at
+            description: System entry date -- when this version was recorded, which can post-date effective_start_date for backdated amendments.
+            tests: [not_null]
+          - name: is_backdated
+          - name: co_termination_group
+            description: Shared across an account's contracts when it has more than one concurrent lifecycle. Null otherwise.

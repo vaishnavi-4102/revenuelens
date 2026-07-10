@@ -1,0 +1,19 @@
+version: 2
+
+models:
+  - name: stg_fx__fx_rates
+    description: Source-conformed daily FX rates. Weekend gaps are preserved deliberately -- fill-forward belongs to the currency-conversion macro in intermediate/marts, not staging.
+    columns:
+      - name: quote_currency
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['USD', 'EUR', 'INR']
+      - name: fx_rate
+        tests: [not_null]
+
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [rate_date, quote_currency]

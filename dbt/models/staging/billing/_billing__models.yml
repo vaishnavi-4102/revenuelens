@@ -1,0 +1,72 @@
+version: 2
+
+models:
+  - name: stg_billing__invoices
+    description: Source-conformed invoices, one row per invoice.
+    columns:
+      - name: invoice_id
+        tests: [not_null, unique]
+      - name: contract_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_crm__contracts')
+                field: contract_id
+      - name: account_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_crm__accounts')
+                field: account_id
+      - name: amount
+        tests: [not_null]
+
+  - name: stg_billing__invoice_line_items
+    description: Source-conformed invoice line items, one row per line.
+    columns:
+      - name: invoice_line_id
+        tests: [not_null, unique]
+      - name: invoice_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_billing__invoices')
+                field: invoice_id
+
+  - name: stg_billing__credit_memos
+    description: Source-conformed credit memos, passed through unmodified and unfiltered -- see model SQL for why late arrivals are never dropped here.
+    columns:
+      - name: credit_memo_id
+        tests: [not_null, unique]
+      - name: invoice_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_billing__invoices')
+                field: invoice_id
+      - name: amount
+        tests: [not_null]
+
+  - name: stg_billing__payments
+    description: Source-conformed payments, deduplicated deterministically on (invoice_id, payment_date, amount, currency) -- see model SQL for the dedup rule.
+    columns:
+      - name: payment_id
+        tests: [not_null, unique]
+      - name: invoice_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_billing__invoices')
+                field: invoice_id
+      - name: amount
+        tests: [not_null]
+
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [invoice_id, payment_date, amount, currency]

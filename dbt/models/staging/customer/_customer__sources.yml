@@ -1,0 +1,37 @@
+version: 2
+
+sources:
+  - name: customer
+    description: Customer master extract (billing contact, tax ID, address). Contains PII masked downstream in marts.
+    schema: RAW
+    config:
+      loaded_at_field: _loaded_at
+      freshness:
+        warn_after: {count: 30, period: hour}
+        error_after: {count: 48, period: hour}
+
+    tables:
+      - name: customer_master
+        description: One row per customer master version. version 2+ rows represent an address/contact change (SCD2 source for D3).
+        columns:
+          - name: account_id
+            tests: [not_null]
+          - name: version
+            tests: [not_null]
+          - name: billing_contact_name
+            description: PII -- masked downstream for all roles except RL_ADMIN/RL_TRANSFORMER/RL_REVENUE_CONTROLLER.
+          - name: billing_contact_email
+            description: PII -- masked downstream.
+          - name: tax_id
+            description: PII -- masked downstream.
+          - name: address_line1
+            description: PII -- masked downstream.
+          - name: city
+          - name: region
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['US', 'EU', 'IN']
+          - name: legal_entity
+          - name: updated_at
+            tests: [not_null]

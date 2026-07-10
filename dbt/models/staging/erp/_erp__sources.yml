@@ -1,0 +1,41 @@
+version: 2
+
+sources:
+  - name: erp
+    description: NetSuite-like GL extract -- journal entries for revenue accounts, landed monthly.
+    schema: RAW
+    config:
+      loaded_at_field: _loaded_at
+      freshness:
+        warn_after: {count: 35, period: day}
+        error_after: {count: 40, period: day}
+
+    tables:
+      - name: gl_journal_entries
+        description: One row per JE line. AUTO_INVOICE/AUTO_PAYMENT lines are system-posted from billing; MANUAL_ADJUSTMENT lines are analyst corrections.
+        columns:
+          - name: je_id
+            tests: [not_null, unique]
+          - name: posting_date
+            tests: [not_null]
+          - name: gl_account
+            tests: [not_null]
+          - name: debit_credit
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['DEBIT', 'CREDIT']
+          - name: amount
+            tests: [not_null]
+          - name: currency
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['USD', 'EUR', 'INR']
+          - name: reference_id
+            description: Invoice ID the JE line was posted from.
+          - name: je_type
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['AUTO_INVOICE', 'AUTO_PAYMENT', 'MANUAL_ADJUSTMENT']

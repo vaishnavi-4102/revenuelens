@@ -1,0 +1,34 @@
+version: 2
+
+sources:
+  - name: fx
+    description: Daily FX rates, USD base.
+    schema: RAW
+    config:
+      loaded_at_field: _loaded_at
+      freshness:
+        # Weekends are intentionally absent from the source (see generator),
+        # so the threshold has to tolerate a 2-day gap without ever tolerating
+        # a genuine missed weekday load.
+        warn_after: {count: 3, period: day}
+        error_after: {count: 5, period: day}
+
+    tables:
+      - name: fx_rates
+        description: One row per (rate_date, quote_currency). Missing weekend rows are expected; fill-forward is handled by a dbt macro, not by this source.
+        columns:
+          - name: rate_date
+            tests: [not_null]
+          - name: base_currency
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['USD']
+          - name: quote_currency
+            tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values: ['USD', 'EUR', 'INR']
+          - name: fx_rate
+            tests: [not_null]

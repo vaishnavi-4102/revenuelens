@@ -1,0 +1,39 @@
+name: 'revenuelens'
+version: '1.0.0'
+config-version: 2
+
+profile: 'revenuelens'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+analysis-paths: ["analyses"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Per-invocation QUERY_TAG (see macros/query_tag.sql). Per-model tagging is
+# layered on top via +pre-hook/+post-hook below so Snowflake QUERY_HISTORY
+# can be sliced by model, not just by dbt run -- this is what the D5 cost
+# story ("cost per pipeline layer and team") queries against.
+on-run-start:
+  - "{{ reset_query_tag() }}"
+on-run-end:
+  - "{{ reset_query_tag() }}"
+
+models:
+  revenuelens:
+    +pre-hook: "{{ set_query_tag() }}"
+    +post-hook: "{{ reset_query_tag() }}"
+
+    staging:
+      +materialized: view
+      +schema: staging
+
+    # intermediate/ and marts/finance/ configs are added when those layers
+    # are actually built (P2) -- an empty config path here just trips a dbt
+    # "unused configuration path" warning on every invocation until then.

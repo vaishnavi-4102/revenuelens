@@ -1,0 +1,11 @@
+# RevenueLens synthetic data generator config.
+# demo_anchor_date is the last day of the historical backfill ("yesterday"
+# from the demo's point of view). Daily-mode runs default to the day after
+# it, so re-running `daily` with successive --as-of dates simulates the
+# pipeline's ongoing incremental load without the backfill window drifting
+# every time the generator is invoked on a different real-world date.
+seed: 42
+n_accounts: 2400
+backfill_months: 24
+demo_anchor_date: "2026-07-09"
+output_dir: "output"

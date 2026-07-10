@@ -1,0 +1,99 @@
+version: 2
+
+sources:
+  - name: billing
+    description: Billing platform extract -- invoices, line items, credit memos, payments. credit_memos is the SLA-monitored source for the D2 late-arrival demo.
+    schema: RAW
+    config:
+      loaded_at_field: _loaded_at
+      freshness:
+        warn_after: {count: 24, period: hour}
+        error_after: {count: 30, period: hour}
+
+    tables:
+      - name: invoices
+        columns:
+          - name: invoice_id
+            tests: [not_null, unique]
+          - name: contract_id
+            tests: [not_null]
+          - name: account_id
+            tests: [not_null]
+          - name: invoice_date
+            tests: [not_null]
+          - name: currency
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['USD', 'EUR', 'INR']
+          - name: amount
+            tests: [not_null]
+
+      - name: invoice_line_items
+        columns:
+          - name: invoice_line_id
+            tests: [not_null, unique]
+          - name: invoice_id
+            tests: [not_null]
+          - name: quantity
+          - name: unit_amount
+          - name: amount
+            tests: [not_null]
+
+      - name: credit_memos
+        description: >
+          Late-arriving by design: issue_date is when the credit was agreed,
+          system_entry_date is when it actually landed in the source system,
+          which can be weeks later (or, for the injected demo event, land
+          "today" against a period that already closed). This source
+          deliberately has a looser freshness window than invoices/payments
+          because late arrival is expected behavior, not a data quality
+          problem -- the SLA in Airflow watches issue_date-to-system_entry_date
+          lag directly rather than relying solely on dbt source freshness.
+        config:
+          loaded_at_field: _loaded_at
+          freshness:
+            warn_after: {count: 30, period: hour}
+            error_after: {count: 48, period: hour}
+        columns:
+          - name: credit_memo_id
+            tests: [not_null, unique]
+          - name: invoice_id
+            tests: [not_null]
+          - name: account_id
+            tests: [not_null]
+          - name: issue_date
+            tests: [not_null]
+          - name: system_entry_date
+            tests: [not_null]
+          - name: currency
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['USD', 'EUR', 'INR']
+          - name: amount
+            tests: [not_null]
+          - name: reason
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['service_credit', 'billing_error', 'goodwill', 'downgrade_proration']
+
+      - name: payments
+        description: Contains intentional duplicate-record and partial-payment messiness -- deduplicated deterministically in stg_billing__payments.
+        columns:
+          - name: payment_id
+            tests: [not_null, unique]
+          - name: invoice_id
+            tests: [not_null]
+          - name: account_id
+            tests: [not_null]
+          - name: payment_date
+            tests: [not_null]
+          - name: amount
+            tests: [not_null]
+          - name: currency
+            tests:
+              - accepted_values:
+                  arguments:
+                    values: ['USD', 'EUR', 'INR']
