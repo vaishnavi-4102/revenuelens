@@ -38,7 +38,9 @@ def generate_contracts(accounts_df: pd.DataFrame, cfg) -> pd.DataFrame:
                 effective_start = max(acc["created_date"], cfg.backfill_start + timedelta(days=start_offset))
             seats = int(rng.integers(5, 500))
             currency = acc["currency"]
-            arr = round(seats * rng.uniform(800, 2500), 2)
+            # Per-seat rate calibrated so ~2,400 accounts land near the
+            # problem doc's stated ~$80M portfolio ARR scenario.
+            arr = round(seats * rng.uniform(70, 240), 2)
             version = 1
 
             rows.append(_row(
@@ -64,7 +66,7 @@ def generate_contracts(accounts_df: pd.DataFrame, cfg) -> pd.DataFrame:
                     cur_seats = max(1, int(cur_seats * rng.uniform(0.5, 0.9)))
                 elif a_type == "currency_change":
                     cur_currency = str(rng.choice([c for c in CURRENCIES if c != cur_currency]))
-                cur_arr = round(cur_seats * rng.uniform(800, 2500), 2)
+                cur_arr = round(cur_seats * rng.uniform(70, 240), 2)
 
                 # Backdating messiness: ~25% of amendments are recorded in the
                 # system weeks after they took effect.

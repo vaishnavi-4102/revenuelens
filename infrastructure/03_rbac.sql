@@ -74,6 +74,17 @@ GRANT INSERT, SELECT, TRUNCATE ON FUTURE TABLES IN SCHEMA RL_PROD.RAW TO ROLE RL
 -- ---------------------------------------------------------------------------
 GRANT USAGE ON WAREHOUSE RL_TRANSFORMING_WH TO ROLE RL_TRANSFORMER;
 
+-- CI (.github/workflows/dbt_ci.yml) runs as RL_TRANSFORMER too, on
+-- RL_CI_WH, and creates/drops a zero-copy clone of RL_PROD per PR --
+-- CREATE DATABASE is account-level in Snowflake (no narrower scope exists),
+-- and granting an account-level privilege requires ACCOUNTADMIN
+-- specifically -- RL_ADMIN (and even SECURITYADMIN) get "insufficient
+-- privileges" on this one grant, confirmed live.
+GRANT USAGE ON WAREHOUSE RL_CI_WH TO ROLE RL_TRANSFORMER;
+USE ROLE ACCOUNTADMIN;
+GRANT CREATE DATABASE ON ACCOUNT TO ROLE RL_TRANSFORMER;
+USE ROLE RL_ADMIN;
+
 GRANT USAGE ON DATABASE RL_DEV TO ROLE RL_TRANSFORMER;
 GRANT USAGE ON DATABASE RL_QA TO ROLE RL_TRANSFORMER;
 GRANT USAGE ON DATABASE RL_PROD TO ROLE RL_TRANSFORMER;
@@ -87,11 +98,14 @@ GRANT SELECT ON FUTURE TABLES IN SCHEMA RL_PROD.RAW TO ROLE RL_TRANSFORMER;
 
 -- dbt needs CREATE on STAGING/INTERMEDIATE/MARTS_FINANCE in every env, plus
 -- ownership-equivalent DML rights so it can build/drop/replace models freely.
-GRANT USAGE, CREATE TABLE, CREATE VIEW, CREATE SCHEMA
+-- CREATE TABLE/CREATE VIEW are schema-level-only privileges in Snowflake
+-- (granting them at the database level is a compile error) -- they're
+-- covered per-schema by the GRANT ALL ON SCHEMA statements below instead.
+GRANT USAGE, CREATE SCHEMA
     ON DATABASE RL_DEV TO ROLE RL_TRANSFORMER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW, CREATE SCHEMA
+GRANT USAGE, CREATE SCHEMA
     ON DATABASE RL_QA TO ROLE RL_TRANSFORMER;
-GRANT USAGE, CREATE TABLE, CREATE VIEW, CREATE SCHEMA
+GRANT USAGE, CREATE SCHEMA
     ON DATABASE RL_PROD TO ROLE RL_TRANSFORMER;
 
 GRANT ALL ON SCHEMA RL_DEV.STAGING TO ROLE RL_TRANSFORMER;
@@ -124,6 +138,15 @@ GRANT ALL ON FUTURE TABLES IN SCHEMA RL_PROD.INTERMEDIATE TO ROLE RL_TRANSFORMER
 GRANT ALL ON FUTURE VIEWS  IN SCHEMA RL_PROD.INTERMEDIATE TO ROLE RL_TRANSFORMER;
 GRANT ALL ON FUTURE TABLES IN SCHEMA RL_PROD.MARTS_FINANCE TO ROLE RL_TRANSFORMER;
 GRANT ALL ON FUTURE VIEWS  IN SCHEMA RL_PROD.MARTS_FINANCE TO ROLE RL_TRANSFORMER;
+
+-- D5 cost view (rpt_cost_by_layer_daily) reads SNOWFLAKE.ACCOUNT_USAGE,
+-- which is invisible without this grant regardless of any other privilege
+-- RL_TRANSFORMER holds -- ACCOUNT_USAGE is gated by IMPORTED PRIVILEGES on
+-- the SNOWFLAKE database specifically, granted per-role, not inherited
+-- through the RL_ADMIN hierarchy (confirmed live: granting it to RL_ADMIN
+-- alone does not extend it to RL_TRANSFORMER, since RL_ADMIN inherits FROM
+-- RL_TRANSFORMER, not the other way).
+GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE RL_TRANSFORMER;
 
 -- RL_TRANSFORMER also needs the ability to create/apply masking & row access
 -- policies (dbt post-hooks run as this role) and to manage snapshots' schema.

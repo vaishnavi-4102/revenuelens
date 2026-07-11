@@ -79,7 +79,24 @@ CREATE OR REPLACE MASKING POLICY RL_DEV.MARTS_FINANCE.MASK_PII_TEXT AS (val STRI
         ELSE '***MASKED***'
     END;
 
--- Example attachment (this is what the dbt post-hook will do at model-build
--- time -- shown here only for reference, not executed):
+-- RL_ADMIN owns these policies (created them above), but dbt's post_hook
+-- attachment (ALTER TABLE ... SET MASKING POLICY, in dim_customer.sql) runs
+-- as RL_TRANSFORMER -- Snowflake requires APPLY on the specific policy
+-- object to attach it, independent of the CREATE MASKING POLICY grant
+-- RL_TRANSFORMER already has (03) for policies it creates itself. Without
+-- this, every dbt build attaching a policy created here fails on a
+-- permissions error.
+GRANT APPLY ON MASKING POLICY RL_PROD.MARTS_FINANCE.MASK_EMAIL TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON MASKING POLICY RL_PROD.MARTS_FINANCE.MASK_TAX_ID TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON MASKING POLICY RL_PROD.MARTS_FINANCE.MASK_PII_TEXT TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON MASKING POLICY RL_QA.MARTS_FINANCE.MASK_EMAIL TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON MASKING POLICY RL_QA.MARTS_FINANCE.MASK_TAX_ID TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON MASKING POLICY RL_QA.MARTS_FINANCE.MASK_PII_TEXT TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON MASKING POLICY RL_DEV.MARTS_FINANCE.MASK_EMAIL TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON MASKING POLICY RL_DEV.MARTS_FINANCE.MASK_TAX_ID TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON MASKING POLICY RL_DEV.MARTS_FINANCE.MASK_PII_TEXT TO ROLE RL_TRANSFORMER;
+
+-- Example attachment (this is what the dbt post-hook actually does at
+-- model-build time -- see dbt/models/marts/finance/dim_customer.sql):
 -- ALTER TABLE RL_PROD.MARTS_FINANCE.DIM_CUSTOMER
 --     MODIFY COLUMN billing_contact_email SET MASKING POLICY RL_PROD.MARTS_FINANCE.MASK_EMAIL;

@@ -65,10 +65,25 @@ CREATE OR REPLACE ROW ACCESS POLICY RL_DEV.MARTS_FINANCE.ENTITY_ACCESS_POLICY
           AND a.legal_entity = legal_entity
     );
 
+-- Same reasoning as 04_masking_policies.sql: RL_ADMIN owns this policy, but
+-- dbt's post_hook attachment runs as RL_TRANSFORMER and needs APPLY on the
+-- specific object, independent of the CREATE ROW ACCESS POLICY grant (03).
+GRANT APPLY ON ROW ACCESS POLICY RL_PROD.MARTS_FINANCE.ENTITY_ACCESS_POLICY TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON ROW ACCESS POLICY RL_QA.MARTS_FINANCE.ENTITY_ACCESS_POLICY TO ROLE RL_TRANSFORMER;
+GRANT APPLY ON ROW ACCESS POLICY RL_DEV.MARTS_FINANCE.ENTITY_ACCESS_POLICY TO ROLE RL_TRANSFORMER;
+
+-- dbt (RL_TRANSFORMER) also needs INSERT on the mapping table to seed/manage
+-- analyst entity assignments as part of the demo setup, not just RL_ADMIN.
+GRANT SELECT, INSERT, DELETE ON TABLE RL_PROD.MARTS_FINANCE.ANALYST_ENTITY_ACCESS TO ROLE RL_TRANSFORMER;
+GRANT SELECT, INSERT, DELETE ON TABLE RL_QA.MARTS_FINANCE.ANALYST_ENTITY_ACCESS TO ROLE RL_TRANSFORMER;
+GRANT SELECT, INSERT, DELETE ON TABLE RL_DEV.MARTS_FINANCE.ANALYST_ENTITY_ACCESS TO ROLE RL_TRANSFORMER;
+
 -- Example seed for the D4 demo (edit user_name to match the real demo login):
 -- INSERT INTO RL_PROD.MARTS_FINANCE.ANALYST_ENTITY_ACCESS (user_name, legal_entity)
 -- VALUES ('DEMO_FINANCE_ANALYST', 'US');
 
--- Example attachment (performed by dbt post-hook once the mart exists):
--- ALTER TABLE RL_PROD.MARTS_FINANCE.FCT_ARR_WATERFALL
+-- Example attachment (performed by dbt post-hook once the mart exists --
+-- see dbt/models/marts/finance/dim_customer.sql and
+-- fct_arr_waterfall_account_monthly.sql / fct_revenue_reconciliation_monthly.sql):
+-- ALTER TABLE RL_PROD.MARTS_FINANCE.FCT_ARR_WATERFALL_ACCOUNT_MONTHLY
 --     ADD ROW ACCESS POLICY RL_PROD.MARTS_FINANCE.ENTITY_ACCESS_POLICY ON (legal_entity);

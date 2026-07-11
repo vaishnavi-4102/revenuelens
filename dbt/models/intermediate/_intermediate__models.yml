@@ -1,0 +1,84 @@
+version: 2
+
+models:
+  - name: int_date_spine_daily
+    description: One row per calendar day covering the observed data window (bounds derived from source data, not hardcoded).
+    columns:
+      - name: date_day
+        tests: [not_null, unique]
+
+  - name: int_date_spine_month_end
+    description: One row per calendar month-end within the observed window. The periodicity the ARR waterfall runs at.
+    columns:
+      - name: month_end_date
+        tests: [not_null, unique]
+
+  - name: int_fx_rates_daily_filled
+    description: Daily USD-base FX rates with weekend/holiday gaps forward-filled (back-filled only for the rare leading gap before the first observed rate). All downstream USD conversions read from here, never from stg_fx__fx_rates directly.
+    columns:
+      - name: rate_date
+        tests: [not_null]
+      - name: quote_currency
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['USD', 'EUR', 'INR']
+      - name: fx_rate
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [rate_date, quote_currency]
+
+  - name: int_customer_master_versions
+    description: stg_customer__customer_master enriched with an explicit exclusive upper bound (effective_end_date_exclusive) and an is_current_version flag per account. Same "source is already SCD2" reasoning as int_contract_versions -- no dbt snapshot needed.
+    columns:
+      - name: customer_master_sk
+        tests: [not_null, unique]
+      - name: effective_end_date_exclusive
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [account_id, customer_master_version]
+
+  - name: int_contract_versions
+    description: stg_crm__contracts enriched with account region/legal_entity and an explicit exclusive upper bound (effective_end_date_exclusive) for each version's validity window. This is the point-in-time reconstruction source -- see model SQL for why dbt snapshot isn't used here.
+    columns:
+      - name: contract_version_sk
+        tests: [not_null, unique]
+      - name: effective_end_date_exclusive
+        tests: [not_null]
+
+  - name: int_contract_arr_monthly
+    description: One row per contract per active month-end, with ARR in both local currency and USD. No rows before a contract starts or after it churns (the churn month itself is included, at $0).
+    columns:
+      - name: arr_usd
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [contract_id, month_end_date]
+
+  - name: int_account_arr_monthly
+    description: Account-level ARR rollup with the prior-period and ever-had-arr-before history flags used to distinguish new logos from reactivations.
+    columns:
+      - name: account_arr_usd
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [account_id, month_end_date]
+
+  - name: int_contract_arr_bridge_monthly
+    description: Decomposes each contract-month's USD ARR delta into real_component_usd (business movement) and fx_component_usd (pure rate/redenomination effect). See model SQL header for the bridge math.
+    columns:
+      - name: real_component_usd
+        tests: [not_null]
+      - name: fx_component_usd
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [contract_id, month_end_date]

@@ -25,6 +25,13 @@ on-run-start:
 on-run-end:
   - "{{ reset_query_tag() }}"
 
+# reprocess_lookback_days: how far back an incremental model looks for
+# recently-landed rows (by _loaded_at, or system_entry_date for credit
+# memos) to decide which (month, legal_entity) keys need reprocessing. 60
+# gives margin over late_events.py's 45-day default backdating window.
+vars:
+  reprocess_lookback_days: 60
+
 models:
   revenuelens:
     +pre-hook: "{{ set_query_tag() }}"
@@ -34,6 +41,11 @@ models:
       +materialized: view
       +schema: staging
 
-    # intermediate/ and marts/finance/ configs are added when those layers
-    # are actually built (P2) -- an empty config path here just trips a dbt
-    # "unused configuration path" warning on every invocation until then.
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+
+    marts:
+      finance:
+        +materialized: table
+        +schema: marts_finance

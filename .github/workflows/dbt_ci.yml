@@ -1,0 +1,129 @@
+name: RevenueLens dbt CI/CD
+
+# Slim CI: a PR builds and tests only what it actually changed
+# (state:modified+) against a zero-copy clone of PROD, not the whole
+# 24-month warehouse -- that's what keeps this fast enough to block a merge
+# on. A merge to main promotes the change to QA and refreshes the cached
+# manifest every future PR compares against.
+
+on:
+  pull_request:
+    paths:
+      - "dbt/**"
+  push:
+    branches: [main]
+    paths:
+      - "dbt/**"
+
+env:
+  SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+  SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+  DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+
+jobs:
+  pr_check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install dbt-core dbt-snowflake
+      - run: cp dbt/profiles.yml.example dbt/profiles.yml
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      - name: Lint (dbt parse -- catches Jinja/ref/source errors before touching a warehouse)
+        working-directory: dbt
+        run: dbt parse
+
+      - name: Restore last known-good prod manifest
+        uses: actions/cache/restore@v4
+        with:
+          path: dbt/prod_state/manifest.json
+          key: prod-manifest-${{ github.event.pull_request.base.sha }}
+          restore-keys: prod-manifest-
+
+      - name: Create zero-copy clone of PROD for this PR
+        env:
+          SNOWFLAKE_CI_DATABASE: RL_CI_PR_${{ github.event.pull_request.number }}
+        run: |
+          python -c "
+          import os, snowflake.connector
+          conn = snowflake.connector.connect(
+              account=os.environ['SNOWFLAKE_ACCOUNT'], user=os.environ['SNOWFLAKE_USER'],
+              password=os.environ['SNOWFLAKE_PASSWORD'], role='RL_TRANSFORMER', warehouse='RL_CI_WH',
+          )
+          # COPY GRANTS is a CREATE TABLE/VIEW clause, not valid on CREATE
+          # DATABASE ... CLONE -- a database clone inherits grants on its
+          # child objects automatically, confirmed live against Snowflake.
+          conn.cursor().execute(
+              f\"CREATE OR REPLACE DATABASE {os.environ['SNOWFLAKE_CI_DATABASE']} \"
+              f\"CLONE RL_PROD\"
+          )
+          "
+
+      - name: dbt build --select state:modified+ (against the clone)
+        working-directory: dbt
+        env:
+          SNOWFLAKE_CI_DATABASE: RL_CI_PR_${{ github.event.pull_request.number }}
+        run: |
+          if [ -f prod_state/manifest.json ]; then
+            dbt build --target ci --select state:modified+ --state prod_state
+          else
+            echo "No cached prod manifest found (first run) -- building everything once to seed it."
+            dbt build --target ci
+          fi
+
+      - name: Drop the PR's clone database
+        if: always()
+        env:
+          SNOWFLAKE_CI_DATABASE: RL_CI_PR_${{ github.event.pull_request.number }}
+        run: |
+          python -c "
+          import os, snowflake.connector
+          conn = snowflake.connector.connect(
+              account=os.environ['SNOWFLAKE_ACCOUNT'], user=os.environ['SNOWFLAKE_USER'],
+              password=os.environ['SNOWFLAKE_PASSWORD'], role='RL_TRANSFORMER', warehouse='RL_CI_WH',
+          )
+          conn.cursor().execute(f\"DROP DATABASE IF EXISTS {os.environ['SNOWFLAKE_CI_DATABASE']}\")
+          "
+
+  deploy_qa:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install dbt-core dbt-snowflake
+      - run: cp dbt/profiles.yml.example dbt/profiles.yml
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      - name: Deploy to QA
+        working-directory: dbt
+        run: dbt build --target qa
+
+      - name: Refresh the cached prod manifest for future PRs
+        working-directory: dbt
+        run: |
+          dbt compile --target prod
+          mkdir -p prod_state
+          cp target/manifest.json prod_state/manifest.json
+
+      - uses: actions/cache/save@v4
+        with:
+          path: dbt/prod_state/manifest.json
+          key: prod-manifest-${{ github.sha }}

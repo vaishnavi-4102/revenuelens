@@ -1,0 +1,69 @@
+version: 2
+
+models:
+  - name: fct_arr_movements
+    description: ARR waterfall at contract grain -- one row per contract per active month, classified into exactly one movement type. The drill-down layer underneath fct_arr_waterfall_account_monthly.
+    columns:
+      - name: arr_movement_sk
+        tests: [not_null, unique]
+      - name: movement_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['new', 'expansion', 'contraction', 'churn', 'reactivation', 'no_change']
+      - name: account_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_crm__accounts')
+                field: account_id
+
+  - name: fct_arr_waterfall_account_monthly
+    description: Contract-level movements netted to one row per account per month. Row-access scoped on legal_entity via post_hook (RL_FINANCE_ANALYST only sees their entity).
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [account_id, month_end_date]
+
+  - name: fct_arr_waterfall_portfolio_monthly
+    description: One row per month -- the company-wide ARR figure and its full bridge from the prior month. This is what the D1 CFO dashboard reads. Deliberately NOT row-access scoped -- it's a company-wide aggregate, not entity-attributable data.
+    columns:
+      - name: month_end_date
+        tests: [not_null, unique]
+      - name: total_arr_usd
+        tests: [not_null]
+
+  - name: fct_revenue_reconciliation_monthly
+    description: Billed / Recognized / Collected / Credits by (month, legal_entity), all in USD. Incremental with a late-arrival lookback (reprocess_lookback_days) -- credit memos are netted into recognized_net_of_credits_usd. Row-access scoped on legal_entity via post_hook.
+    columns:
+      - name: month_start
+        tests: [not_null]
+      - name: legal_entity
+        tests: [not_null]
+      - name: recognized_net_of_credits_usd
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [month_start, legal_entity]
+
+  - name: dim_customer
+    description: Current customer master state, one row per account. PII columns masked and legal_entity row-access scoped via post_hook -- the D4 governance demo target.
+    columns:
+      - name: account_id
+        tests: [not_null, unique]
+      - name: billing_contact_email
+        tests: [not_null]
+
+  - name: rpt_restatement_log
+    description: Append-only log of which (month_start, legal_entity) keys fct_revenue_reconciliation_monthly reprocessed on each run -- the D2 restatement audit trail. Pair with Time Travel on fct_revenue_reconciliation_monthly for the literal before/after (see demo/restatement_audit_query.sql).
+    columns:
+      - name: run_started_at
+        tests: [not_null]
+      - name: month_start
+        tests: [not_null]
+
+  - name: rpt_cost_by_layer_daily
+    description: D5 cost story -- spend by pipeline layer/model/warehouse/day, parsed from QUERY_TAG and apportioned against actual WAREHOUSE_METERING_HISTORY credits. estimated_credits is a defensible approximation (Snowflake meters per warehouse, not per query), not an exact figure -- see model SQL header.

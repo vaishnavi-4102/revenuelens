@@ -1,0 +1,4 @@
+# Airflow itself is expected to already be installed (local/Docker per spec
+# guardrails -- managed Airflow not required). This pins the one extra
+# provider these DAGs need beyond Airflow core.
+apache-airflow-providers-snowflake>=5.0.0

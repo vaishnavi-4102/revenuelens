@@ -52,3 +52,21 @@ revenuelens:
       warehouse: RL_TRANSFORMING_WH
       schema: DBT_DEFAULT
       threads: 8
+
+    # Used only by .github/workflows/dbt_ci.yml. database is a per-PR
+    # zero-copy clone of RL_PROD (RL_CI_PR_<number>, created and dropped by
+    # the workflow itself) -- SNOWFLAKE_CI_DATABASE is set by CI, not a
+    # human. RL_CI_WH keeps CI spend attributable and separate from any
+    # interactive warehouse (the D5 cost story).
+    ci:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
+      private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      role: RL_TRANSFORMER
+      database: "{{ env_var('SNOWFLAKE_CI_DATABASE', 'RL_CI') }}"
+      warehouse: RL_CI_WH
+      schema: DBT_DEFAULT
+      threads: 4
