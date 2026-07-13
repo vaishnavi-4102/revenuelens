@@ -1,0 +1,94 @@
+# Minimal local Airflow runtime for RevenueLens: LocalExecutor (Postgres
+# only, no Redis/workers -- this is a demo, not a production deployment) so
+# `docker compose up` is enough to get a real scheduler running the 3 DAGs.
+#
+# The repo is bind-mounted read-write at /opt/revenuelens so the ingestion
+# DAG's `python main.py daily ...` and dbt's `dbt run` execute against the
+# same files you edit on the host, and generated CSVs land back on the host
+# too. The DAGs derive their project root from their own file location (see
+# airflow/dags/10_ingestion.py), so nothing here needs a matching hardcoded
+# path -- /opt/revenuelens only has to be *a* mount point, not a specific one.
+#
+# Snowflake credentials and the snowflake_default connection are supplied
+# via .env (copy .env.example -> .env, never commit .env).
+
+x-airflow-common: &airflow-common
+  build:
+    context: ..
+    dockerfile: airflow/Dockerfile
+  # Runs the container as the host user (set AIRFLOW_UID/AIRFLOW_GID in
+  # .env, e.g. `id -u`/`id -g`) instead of the image's baked-in airflow
+  # user -- the repo is bind-mounted read-write below, and without this the
+  # container user can't write into data_generator/output/ or dbt/target/
+  # if those already exist on the host owned by a different uid (confirmed
+  # live: generate_daily_data fails with PermissionError otherwise).
+  user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-0}"
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/revenuelens/airflow/dags
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: utc
+    AIRFLOW_CONN_SNOWFLAKE_DEFAULT: ${AIRFLOW_CONN_SNOWFLAKE_DEFAULT:-}
+  volumes:
+    - ..:/opt/revenuelens
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    # No entrypoint override: the base image's own entrypoint patches
+    # /etc/passwd for whatever arbitrary AIRFLOW_UID we're running as (it
+    # has no real passwd entry otherwise) before exec-ing this command --
+    # overriding entrypoint here skips that and getuser() fails outright
+    # (confirmed live: "the user Airflow is running as has no username").
+    command:
+      - bash
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username "${AIRFLOW_ADMIN_USER:-admin}" \
+          --password "${AIRFLOW_ADMIN_PASSWORD:-admin}" \
+          --firstname RevenueLens \
+          --lastname Demo \
+          --role Admin \
+          --email admin@example.com \
+          || true
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres-db-volume:

@@ -14,22 +14,31 @@ places: `wait_for_billing_feed` actually checks whether today's billing
 files landed (not an always-succeeds placeholder), and `sla` +
 `sla_miss_callback` on the ingestion DAG page someone if the whole run
 hasn't finished within the SLA window -- see `_billing_sla_miss`.
+
+CRM/billing loads use TaskFlow's `.expand_kwargs()` -- real Airflow dynamic
+task mapping, one mapped task instance per source table, rather than a
+Python-level list comprehension generating static tasks at parse time.
 """
 import logging
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from airflow import DAG
 from airflow.datasets import Dataset
+from airflow.decorators import task
 from airflow.models import Variable
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
 from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 from airflow.sensors.python import PythonSensor
 
 log = logging.getLogger(__name__)
 
-PROJECT_DIR = Variable.get("revenuelens_project_dir", default_var="/home/sigmoid/Revenuelense/revenuelens")
+# airflow/dags/<this file> -> repo root is two levels up. Computed from this
+# file's own location rather than a hardcoded string -- see 30_dbt_marts_and_tests.py
+# for the full rationale.
+_REPO_ROOT_DEFAULT = str(Path(__file__).resolve().parents[2])
+PROJECT_DIR = Variable.get("revenuelens_project_dir", default_var=_REPO_ROOT_DEFAULT)
 SNOWFLAKE_CONN_ID = "snowflake_default"
 
 raw_crm_dataset = Dataset("snowflake://raw/crm")
@@ -62,11 +71,12 @@ BILLING_TABLES = [
 ]
 
 
-def _load_table_if_present(ds, name, stage, table, columns):
+@task
+def load_table_if_present(ds, name, stage, table, columns):
     """PUT + COPY INTO one source's daily slice, if the generator produced
     one for this date (empty slices simply aren't written -- see
     data_generator/generator/writer.py -- so a missing file is normal, not
-    an error)."""
+    an error). Mapped once per source table via expand_kwargs below."""
     local_path = f"{PROJECT_DIR}/data_generator/output/daily/{ds}/{name}/{name}.csv"
     if not os.path.exists(local_path):
         log.info("no rows for %s on %s, skipping", name, ds)
@@ -127,7 +137,10 @@ with DAG(
         task_id="generate_daily_data",
         bash_command=(
             f"cd {PROJECT_DIR}/data_generator && "
-            "python main.py daily --as-of {{ ds }}"
+            # revenuelens-python: the generator's isolated venv (pandas/
+            # numpy/Faker), symlinked onto PATH by airflow/Dockerfile --
+            # not Airflow's own Python, which doesn't have these deps.
+            "revenuelens-python main.py daily --as-of {{ ds }}"
         ),
     )
 
@@ -141,25 +154,19 @@ with DAG(
         sla=timedelta(hours=1),
     )
 
-    load_crm_tasks = [
-        PythonOperator(
-            task_id=f"load_{name}_to_raw",
-            python_callable=_load_table_if_present,
-            op_kwargs={"ds": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns},
-            outlets=[raw_crm_dataset],
-        )
+    load_crm_tasks = load_table_if_present.override(
+        task_id="load_crm_to_raw", outlets=[raw_crm_dataset]
+    ).expand_kwargs([
+        {"ds": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns}
         for name, stage, table, columns in CRM_TABLES
-    ]
+    ])
 
-    load_billing_tasks = [
-        PythonOperator(
-            task_id=f"load_{name}_to_raw",
-            python_callable=_load_table_if_present,
-            op_kwargs={"ds": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns},
-            outlets=[raw_billing_dataset],
-        )
+    load_billing_tasks = load_table_if_present.override(
+        task_id="load_billing_to_raw", outlets=[raw_billing_dataset]
+    ).expand_kwargs([
+        {"ds": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns}
         for name, stage, table, columns in BILLING_TABLES
-    ]
+    ])
 
     generate_data >> load_crm_tasks
     generate_data >> wait_for_billing_feed >> load_billing_tasks

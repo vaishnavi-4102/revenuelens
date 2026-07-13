@@ -16,13 +16,18 @@ data. The two snapshot definitions that used to live here were dead code
 have meant building a mechanism the pipeline doesn't need.
 """
 from datetime import datetime
+from pathlib import Path
 
 from airflow import DAG
 from airflow.datasets import Dataset
 from airflow.models import Variable
 from airflow.operators.bash import BashOperator
 
-PROJECT_DIR = Variable.get("revenuelens_project_dir", default_var="/home/sigmoid/Revenuelense/revenuelens")
+# airflow/dags/<this file> -> repo root is two levels up. Computed from this
+# file's own location rather than a hardcoded string -- see 30_dbt_marts_and_tests.py
+# for the full rationale.
+_REPO_ROOT_DEFAULT = str(Path(__file__).resolve().parents[2])
+PROJECT_DIR = Variable.get("revenuelens_project_dir", default_var=_REPO_ROOT_DEFAULT)
 
 raw_billing_dataset = Dataset("snowflake://raw/billing")
 raw_crm_dataset = Dataset("snowflake://raw/crm")
