@@ -25,6 +25,7 @@ agg as (
         account_id,
         region,
         legal_entity,
+        segment,
         sum(arr_usd) as account_arr_usd,
         sum(case when movement_type = 'new' then real_component_usd else 0 end) as new_arr_usd,
         sum(case when movement_type = 'expansion' then real_component_usd else 0 end) as expansion_arr_usd,
@@ -33,7 +34,7 @@ agg as (
         sum(case when movement_type = 'reactivation' then real_component_usd else 0 end) as reactivation_arr_usd,
         sum(fx_component_usd) as fx_impact_usd
     from movements
-    group by 1, 2, 3, 4
+    group by 1, 2, 3, 4, 5
 
 )
 

@@ -143,16 +143,16 @@ months_x_entities as (
 affected_keys as (
     -- Only consulted when is_incremental() -- see final filter below.
     select month_start, legal_entity from invoices_usd
-        where _loaded_at >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+        where _loaded_at >= dateadd(day, -{{ lookback_days }}, {{ as_of_timestamp() }})
     union
     select month_start, legal_entity from credit_memos_usd
-        where system_entry_date >= dateadd(day, -{{ lookback_days }}, current_date())
+        where system_entry_date >= dateadd(day, -{{ lookback_days }}, {{ as_of_date() }})
     union
     select month_start, legal_entity from payments_usd
-        where _loaded_at >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+        where _loaded_at >= dateadd(day, -{{ lookback_days }}, {{ as_of_timestamp() }})
     union
     select month_start, legal_entity from gl_usd
-        where _loaded_at >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+        where _loaded_at >= dateadd(day, -{{ lookback_days }}, {{ as_of_timestamp() }})
 ),
 
 final as (

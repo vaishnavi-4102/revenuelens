@@ -84,6 +84,7 @@ select
     d.account_id,
     d.region,
     d.legal_entity,
+    d.segment,
     d.currency,
     d.arr_local,
     d.arr_usd,

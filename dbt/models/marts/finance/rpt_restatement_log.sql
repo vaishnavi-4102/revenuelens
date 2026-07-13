@@ -24,21 +24,21 @@ invoices_affected as (
     select date_trunc('month', i.invoice_date) as month_start, a.legal_entity
     from {{ ref('stg_billing__invoices') }} i
     left join accounts a on a.account_id = i.account_id
-    where i._loaded_at >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+    where i._loaded_at >= dateadd(day, -{{ lookback_days }}, {{ as_of_timestamp() }})
 ),
 
 credit_memos_affected as (
     select date_trunc('month', cm.issue_date) as month_start, a.legal_entity
     from {{ ref('stg_billing__credit_memos') }} cm
     left join accounts a on a.account_id = cm.account_id
-    where cm.system_entry_date >= dateadd(day, -{{ lookback_days }}, current_date())
+    where cm.system_entry_date >= dateadd(day, -{{ lookback_days }}, {{ as_of_date() }})
 ),
 
 payments_affected as (
     select date_trunc('month', p.payment_date) as month_start, a.legal_entity
     from {{ ref('stg_billing__payments') }} p
     left join accounts a on a.account_id = p.account_id
-    where p._loaded_at >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+    where p._loaded_at >= dateadd(day, -{{ lookback_days }}, {{ as_of_timestamp() }})
 ),
 
 gl_affected as (
@@ -46,7 +46,7 @@ gl_affected as (
     from {{ ref('stg_erp__gl_journal_entries') }} g
     left join {{ ref('stg_billing__invoices') }} i on i.invoice_id = g.invoice_id
     left join accounts a on a.account_id = i.account_id
-    where g._loaded_at >= dateadd(day, -{{ lookback_days }}, current_timestamp())
+    where g._loaded_at >= dateadd(day, -{{ lookback_days }}, {{ as_of_timestamp() }})
 ),
 
 affected_keys as (

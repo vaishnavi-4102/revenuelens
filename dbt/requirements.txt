@@ -1,0 +1,8 @@
+# dbt-core itself (as opposed to dbt packages, see packages.yml). Kept
+# separate from airflow/requirements.txt on purpose: installing dbt-core
+# into the same Python environment as Airflow is a well-known way to break
+# Airflow (conflicting pins on click/jinja2/requests/etc). The Airflow
+# Docker image builds this into its own isolated venv instead -- see
+# airflow/Dockerfile.
+dbt-core>=1.11,<1.12
+dbt-snowflake>=1.11,<1.12

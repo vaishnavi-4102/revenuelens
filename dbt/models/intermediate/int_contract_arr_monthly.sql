@@ -71,7 +71,7 @@ active_version as (
 -- downstream (int_account_arr_monthly's GROUP BY includes both columns).
 accounts as (
 
-    select account_id, region, legal_entity
+    select account_id, region, legal_entity, segment
     from {{ ref('stg_crm__accounts') }}
 
 ),
@@ -84,6 +84,7 @@ joined as (
         cm.account_id,
         a.region,
         a.legal_entity,
+        a.segment,
         av.version_number,
         coalesce(av.arr_amount, 0) as arr_local,
         av.currency,

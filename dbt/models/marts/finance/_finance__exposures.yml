@@ -1,0 +1,22 @@
+version: 2
+
+exposures:
+  - name: cfo_arr_dashboard
+    label: CFO ARR Dashboard
+    type: dashboard
+    maturity: medium
+    description: >
+      D1 demo target: the Snowsight dashboard showing the ARR waterfall
+      (new/expansion/contraction/churn/reactivation) by month, segment, and
+      geography -- one number, one definition. Built directly from the
+      queries in demo/dashboard/*.sql; the dashboard itself is a Snowsight
+      UI object, not a dbt-managed artifact, but declaring it here means
+      `dbt docs generate` renders the full lineage graph from this exposure
+      back through the marts to RAW, which is the actual "dbt-documented
+      lineage from dashboard to source" the spec asks for.
+    depends_on:
+      - ref('fct_arr_waterfall_portfolio_monthly')
+      - ref('fct_arr_waterfall_account_monthly')
+    owner:
+      name: Analytics Engineering
+      email: analytics-engineering@example.com

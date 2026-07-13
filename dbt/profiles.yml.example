@@ -16,8 +16,13 @@ revenuelens:
       type: snowflake
       account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
       user: "{{ env_var('SNOWFLAKE_USER') }}"
-      # Prefer key-pair auth for any non-interactive user (Airflow, CI).
-      # Password auth shown here for local dev convenience only.
+      # dev is the one target a human runs interactively, so it's also the
+      # only one that supports SSO: set SNOWFLAKE_AUTHENTICATOR=externalbrowser
+      # and skip SNOWFLAKE_PASSWORD entirely -- dbt will pop open a browser
+      # window for the SSO login instead. qa/prod/ci are driven by Airflow
+      # and CI, which can't click through a browser prompt, so those stay on
+      # password/key-pair auth.
+      authenticator: "{{ env_var('SNOWFLAKE_AUTHENTICATOR', 'snowflake') }}"
       password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
       private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
       private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"

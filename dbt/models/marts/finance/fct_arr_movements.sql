@@ -45,6 +45,7 @@ select
     account_id,
     region,
     legal_entity,
+    segment,
     currency,
     arr_local,
     arr_usd,
