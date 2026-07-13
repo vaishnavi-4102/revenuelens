@@ -26,6 +26,21 @@ x-airflow-common: &airflow-common
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    # dbt's default profile lookup is ~/.dbt/profiles.yml, which doesn't
+    # exist in this image -- confirmed live: "Path '/home/airflow/.dbt'
+    # does not exist" on the very first dbt_staging task. profiles.yml
+    # itself is gitignored (each environment copies it from
+    # profiles.yml.example, same as CI does) but lives in the bind-mounted
+    # repo, so this just needs to point at it.
+    DBT_PROFILES_DIR: /opt/revenuelens/dbt
+    # dbt's BashOperator tasks are a separate bash subprocess -- they don't
+    # inherit anything from AIRFLOW_CONN_SNOWFLAKE_DEFAULT, which only the
+    # Python/SnowflakeHook ingestion tasks read. profiles.yml's env_var()
+    # calls need these directly (confirmed live: "Env var required but not
+    # provided: SNOWFLAKE_ACCOUNT" on the first real dbt_staging attempt).
+    SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT:-}
+    SNOWFLAKE_USER: ${SNOWFLAKE_USER:-}
+    SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD:-}
     AIRFLOW__CORE__DAGS_FOLDER: /opt/revenuelens/airflow/dags
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DEFAULT_TIMEZONE: utc

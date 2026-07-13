@@ -72,19 +72,27 @@ BILLING_TABLES = [
 
 
 @task
-def load_table_if_present(ds, name, stage, table, columns):
+def load_table_if_present(run_date, name, stage, table, columns):
     """PUT + COPY INTO one source's daily slice, if the generator produced
     one for this date (empty slices simply aren't written -- see
     data_generator/generator/writer.py -- so a missing file is normal, not
-    an error). Mapped once per source table via expand_kwargs below."""
-    local_path = f"{PROJECT_DIR}/data_generator/output/daily/{ds}/{name}/{name}.csv"
+    an error). Mapped once per source table via expand_kwargs below.
+
+    Parameter is `run_date`, not `ds` -- confirmed live that naming it `ds`
+    breaks TaskFlow's @task decorator: `ds` is a reserved Airflow context
+    key, and the decorator tries to auto-inject a default for it, producing
+    an invalid signature (a defaulted `ds` landing before the required
+    `name`/`stage`/`table`/`columns` params) -- every mapped task instance
+    failed at render time with "non-default argument follows default
+    argument" before this rename."""
+    local_path = f"{PROJECT_DIR}/data_generator/output/daily/{run_date}/{name}/{name}.csv"
     if not os.path.exists(local_path):
-        log.info("no rows for %s on %s, skipping", name, ds)
+        log.info("no rows for %s on %s, skipping", name, run_date)
         return
 
     hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
     database = hook.database
-    stage_path = f"@{database}.RAW.{stage}/{ds}/{name}/"
+    stage_path = f"@{database}.RAW.{stage}/{run_date}/{name}/"
     hook.run(f"PUT file://{local_path} {stage_path} AUTO_COMPRESS=TRUE OVERWRITE=TRUE")
     hook.run(
         f"COPY INTO {database}.RAW.{table} ({columns}) "
@@ -157,14 +165,14 @@ with DAG(
     load_crm_tasks = load_table_if_present.override(
         task_id="load_crm_to_raw", outlets=[raw_crm_dataset]
     ).expand_kwargs([
-        {"ds": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns}
+        {"run_date": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns}
         for name, stage, table, columns in CRM_TABLES
     ])
 
     load_billing_tasks = load_table_if_present.override(
         task_id="load_billing_to_raw", outlets=[raw_billing_dataset]
     ).expand_kwargs([
-        {"ds": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns}
+        {"run_date": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns}
         for name, stage, table, columns in BILLING_TABLES
     ])
 

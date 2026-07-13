@@ -14,17 +14,43 @@
 # pandas + snowflake-snowpark-python ship with the app already, so sticking
 # to those means nothing ever needs to be fetched.
 #
-# Setup in Snowsight: Projects -> Streamlit -> + Streamlit App. Set the
-# app's database/schema to RL_DEV / MARTS_FINANCE (or wherever you're
-# demoing from) and warehouse to RL_BI_WH. Replace the boilerplate code
-# with everything below. Leave pyproject.toml's dependencies as just
-# ["streamlit[snowflake]"] -- remove "plotly" if it's listed.
+# Deployed via `CREATE STREAMLIT` (demo/deploy_dashboard.py), not clicked
+# through the Snowsight UI -- table references below are unqualified
+# (MARTS_FINANCE.*, no database prefix) so the same file deploys correctly
+# to RL_DEV/RL_QA/RL_PROD depending only on which database the app object
+# itself is created in.
+#
+# To edit by hand instead: Snowsight -> Projects -> Streamlit -> open
+# RL_CFO_ARR_DASHBOARD -> Edit, or re-run deploy_dashboard.py after changing
+# this file.
 import pandas as pd
 import streamlit as st
 from snowflake.snowpark.context import get_active_session
 
 st.set_page_config(page_title="RevenueLens CFO ARR Dashboard", layout="wide")
 session = get_active_session()
+# Do NOT call session.use_warehouse()/session.sql("USE WAREHOUSE ...") here
+# -- confirmed live that Streamlit-in-Snowflake's sandboxed session rejects
+# USE-family statements outright ("Object does not exist, or operation
+# cannot be performed", not a privilege error -- the same statement runs
+# fine as a plain SQL session with the same role). The warehouse has to
+# come from QUERY_WAREHOUSE on the CREATE STREAMLIT object itself (see
+# demo/deploy_dashboard.py).
+
+
+def sql_to_df(query: str) -> pd.DataFrame:
+    # .to_pandas(), not .collect(): the app's earlier "No active warehouse
+    # selected" failures turned out to be a missing grant (RL_TRANSFORMER,
+    # the app's OWNER -- Streamlit apps run with owner's rights, not the
+    # viewer's -- had no USAGE on RL_BI_WH, the app's QUERY_WAREHOUSE; see
+    # infrastructure/03_rbac.sql), not a .to_pandas()-specific issue as
+    # first suspected. Reverted to .to_pandas() since manually building a
+    # DataFrame from .collect() rows leaves NUMBER columns as raw Python
+    # Decimal/object dtype, which st.bar_chart renders as empty with no
+    # error -- confirmed live -- while .to_pandas() casts to proper numeric
+    # dtypes automatically.
+    return session.sql(query).to_pandas()
+
 
 st.title("RevenueLens — CFO ARR Dashboard")
 st.caption(
@@ -33,17 +59,17 @@ st.caption(
     "-- see the dbt exposure `cfo_arr_dashboard` for full source lineage."
 )
 
-portfolio_monthly = session.sql(
-    "select * from RL_DEV.MARTS_FINANCE.FCT_ARR_WATERFALL_PORTFOLIO_MONTHLY order by month_end_date"
-).to_pandas()
+portfolio_monthly = sql_to_df(
+    "select * from MARTS_FINANCE.FCT_ARR_WATERFALL_PORTFOLIO_MONTHLY order by month_end_date"
+)
 
-account_monthly = session.sql(
+account_monthly = sql_to_df(
     """
     select MONTH_END_DATE, SEGMENT, REGION, ACCOUNT_ARR_USD
-    from RL_DEV.MARTS_FINANCE.FCT_ARR_WATERFALL_ACCOUNT_MONTHLY
-    where MONTH_END_DATE = (select max(MONTH_END_DATE) from RL_DEV.MARTS_FINANCE.FCT_ARR_WATERFALL_ACCOUNT_MONTHLY)
+    from MARTS_FINANCE.FCT_ARR_WATERFALL_ACCOUNT_MONTHLY
+    where MONTH_END_DATE = (select max(MONTH_END_DATE) from MARTS_FINANCE.FCT_ARR_WATERFALL_ACCOUNT_MONTHLY)
     """
-).to_pandas()
+)
 
 latest = portfolio_monthly.iloc[-1]
 
@@ -63,7 +89,17 @@ col3.metric("Contraction + Churn", f"${latest['CONTRACTION_ARR_USD'] + latest['C
 # package. The table underneath gives the precise running total per step.
 st.subheader(f"ARR Waterfall — {latest['MONTH_END_DATE']}")
 
-COMPONENT_ORDER = ["Starting ARR", "New", "Expansion", "Reactivation", "Contraction", "Churn", "FX Impact", "Ending ARR"]
+# Numbered labels ("1. Starting ARR"), not a pandas Categorical dtype --
+# confirmed live that this account's bundled Streamlit (1.22.0-sa.10, quite
+# old) throws a frontend TypeError ("Cannot read properties of undefined
+# (reading 'metadata')") serializing a Categorical column to either
+# st.dataframe OR st.table. Plain strings that happen to sort correctly
+# sidesteps the crash entirely and, as a bonus, also fixes st.bar_chart's
+# default alphabetical sort below with zero extra code.
+COMPONENT_ORDER = [
+    "1. Starting ARR", "2. New", "3. Expansion", "4. Reactivation",
+    "5. Contraction", "6. Churn", "7. FX Impact", "8. Ending ARR",
+]
 
 bridge = pd.DataFrame({
     "component": COMPONENT_ORDER,
@@ -89,18 +125,17 @@ bridge["running_total"] = [
     latest["TOTAL_ARR_USD"],
 ]
 
-# Ordered categorical so the chart reads left-to-right as the narrative
-# (Starting -> New -> ... -> Ending), not st.bar_chart's default
-# alphabetical sort (confirmed live: it showed Churn/Contraction/Ending ARR/
-# Expansion/... otherwise).
-bridge["component"] = pd.Categorical(bridge["component"], categories=COMPONENT_ORDER, ordered=True)
-st.dataframe(bridge, hide_index=True, use_container_width=True)
+# st.table, not st.dataframe: st.dataframe is Streamlit's *interactive* grid
+# widget and confirmed live to re-sort rows on render regardless of any
+# ordering hint. st.table is a plain static table with no sort behavior at
+# all -- the right widget for a fixed 8-row summary anyway.
+st.table(bridge.set_index("component"))
 
 # Starting/Ending ARR are charted separately from the movement components:
 # putting an ~$80M anchor bar next to ~$1M monthly deltas on one linear
 # axis makes the deltas invisible (confirmed live -- the movement bars
 # didn't render at readable height at all against that scale).
-movement_components = bridge[~bridge["component"].isin(["Starting ARR", "Ending ARR"])]
+movement_components = bridge[~bridge["component"].isin(["1. Starting ARR", "8. Ending ARR"])]
 st.bar_chart(movement_components.set_index("component")["amount_usd"])
 
 # --- Tile 3: 24-month trend, stacked by movement type ---------------------

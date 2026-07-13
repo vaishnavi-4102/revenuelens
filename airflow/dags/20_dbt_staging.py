@@ -50,6 +50,11 @@ with DAG(
 
     dbt_staging = BashOperator(
         task_id="dbt_staging",
-        bash_command=f"cd {PROJECT_DIR}/dbt && dbt run --select staging",
+        # --target must match whichever database 10_ingestion's
+        # SnowflakeHook connection loads into (AIRFLOW_CONN_SNOWFLAKE_DEFAULT's
+        # `database` extra) -- confirmed live these silently diverge
+        # otherwise (dbt defaults to profiles.yml's `target: dev` / RL_DEV,
+        # completely disconnected from whatever RAW just got loaded into).
+        bash_command=f"cd {PROJECT_DIR}/dbt && dbt run --select staging --target prod",
         outlets=[stg_dataset],
     )

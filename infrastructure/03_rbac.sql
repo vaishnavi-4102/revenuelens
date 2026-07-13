@@ -74,6 +74,17 @@ GRANT INSERT, SELECT, TRUNCATE ON FUTURE TABLES IN SCHEMA RL_PROD.RAW TO ROLE RL
 -- ---------------------------------------------------------------------------
 GRANT USAGE ON WAREHOUSE RL_TRANSFORMING_WH TO ROLE RL_TRANSFORMER;
 
+-- Streamlit apps run with their OWNER's rights, not the viewer's --
+-- RL_CFO_ARR_DASHBOARD (demo/deploy_dashboard.py) is owned by
+-- RL_TRANSFORMER (it ran the CREATE STREAMLIT), so RL_TRANSFORMER needs
+-- USAGE on the app's QUERY_WAREHOUSE even though RL_TRANSFORMER never
+-- queries RL_BI_WH directly itself. Without this, every query in the app
+-- fails with "No active warehouse selected" regardless of which role opens
+-- it in Snowsight -- confirmed live; this was the actual root cause after
+-- ruling out AUTO_SUSPEND timing, the row access policy on
+-- FCT_ARR_WATERFALL_ACCOUNT_MONTHLY, and to_pandas() vs collect().
+GRANT USAGE ON WAREHOUSE RL_BI_WH TO ROLE RL_TRANSFORMER;
+
 -- CI (.github/workflows/dbt_ci.yml) runs as RL_TRANSFORMER too, on
 -- RL_CI_WH, and creates/drops a zero-copy clone of RL_PROD per PR --
 -- CREATE DATABASE is account-level in Snowflake (no narrower scope exists),
@@ -179,6 +190,15 @@ GRANT SELECT ON FUTURE TABLES IN SCHEMA RL_PROD.MARTS_FINANCE TO ROLE RL_FINANCE
 GRANT SELECT ON FUTURE VIEWS  IN SCHEMA RL_PROD.MARTS_FINANCE TO ROLE RL_FINANCE_ANALYST;
 GRANT SELECT ON FUTURE TABLES IN SCHEMA RL_PROD.MARTS_FINANCE TO ROLE RL_BI_READER;
 GRANT SELECT ON FUTURE VIEWS  IN SCHEMA RL_PROD.MARTS_FINANCE TO ROLE RL_BI_READER;
+
+-- The D1 dashboard (demo/deploy_dashboard.py -> RL_CFO_ARR_DASHBOARD) is a
+-- STREAMLIT object, a distinct grantable type from TABLE/VIEW -- the
+-- FUTURE TABLES/VIEWS grants above don't cover it. Using FUTURE STREAMLITS
+-- (not a specific-object grant) so this runs cleanly on a fresh environment
+-- before the app has ever been deployed -- infra scripts run in order
+-- 01-08, long before demo/deploy_dashboard.py ever executes.
+GRANT USAGE ON FUTURE STREAMLITS IN SCHEMA RL_PROD.MARTS_FINANCE TO ROLE RL_BI_READER;
+GRANT USAGE ON FUTURE STREAMLITS IN SCHEMA RL_PROD.MARTS_FINANCE TO ROLE RL_REVENUE_CONTROLLER;
 
 -- Masking (04) and row access (05) policies differentiate RL_REVENUE_CONTROLLER
 -- (unmasked, all-entity) from RL_FINANCE_ANALYST (masked, entity-scoped) even

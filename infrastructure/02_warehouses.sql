@@ -22,9 +22,20 @@ CREATE WAREHOUSE IF NOT EXISTS RL_TRANSFORMING_WH
     INITIALLY_SUSPENDED = TRUE
     COMMENT = 'RevenueLens - dbt run/test/snapshot workload';
 
+-- AUTO_SUSPEND = 300, not 60 like the other three -- this is the warehouse
+-- the D1 Streamlit dashboard runs on, and 60s was confirmed live to be too
+-- aggressive for it specifically: a fresh Streamlit container's cold start
+-- (package import, session init) plus render time between the app's own
+-- sequential queries was enough for the warehouse to suspend mid-script,
+-- surfacing as "No active warehouse selected" on the second query --
+-- Streamlit-in-Snowflake's sandboxed session can't self-heal that with a
+-- USE WAREHOUSE (confirmed live: that statement type is rejected outright
+-- from inside the app). A batch dbt/CI workload doesn't have this
+-- interactive cold-start pattern, so the other three warehouses keep the
+-- tighter, more cost-conscious 60s.
 CREATE WAREHOUSE IF NOT EXISTS RL_BI_WH
     WAREHOUSE_SIZE = 'XSMALL'
-    AUTO_SUSPEND = 60
+    AUTO_SUSPEND = 300
     AUTO_RESUME = TRUE
     INITIALLY_SUSPENDED = TRUE
     COMMENT = 'RevenueLens - Snowsight dashboard / ad-hoc analyst queries';

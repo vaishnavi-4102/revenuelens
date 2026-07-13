@@ -52,9 +52,12 @@ with DAG(
 
     dbt_marts = BashOperator(
         task_id="dbt_run_marts",
+        # --target prod: same reasoning as 20_dbt_staging.py -- must match
+        # 10_ingestion's load target or this builds against the wrong
+        # (empty/stale) database entirely.
         bash_command=(
             f"cd {PROJECT_DIR}/dbt && "
-            f"dbt run --select intermediate marts --vars '{DBT_VARS}'"
+            f"dbt run --select intermediate marts --target prod --vars '{DBT_VARS}'"
         ),
     )
 
@@ -62,7 +65,7 @@ with DAG(
         task_id="dbt_test",
         bash_command=(
             f"cd {PROJECT_DIR}/dbt && "
-            f"dbt test --vars '{DBT_VARS}'"
+            f"dbt test --target prod --vars '{DBT_VARS}'"
         ),
     )
 
