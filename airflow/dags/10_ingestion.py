@@ -44,39 +44,63 @@ SNOWFLAKE_CONN_ID = "snowflake_default"
 raw_crm_dataset = Dataset("snowflake://raw/crm")
 raw_billing_dataset = Dataset("snowflake://raw/billing")
 
-# (source name, stage, RAW table, explicit column list -- matches
-# infrastructure/07 stages and 08 RAW table DDL exactly; explicit columns
-# because _loaded_at is a table default, never present in the CSV).
+# (source name, stage, RAW table, explicit column list, natural key columns
+# -- matches infrastructure/07 stages and 08 RAW table DDL exactly; explicit
+# columns because _loaded_at is a table default, never present in the CSV).
+# The key column(s) are what MERGE uses in load_table_if_present to make a
+# re-PUT of the same daily file idempotent -- see the comment there for why
+# COPY INTO's own file-hash dedup can't be trusted for this.
 CRM_TABLES = [
     ("accounts", "STG_CRM", "ACCOUNTS",
-     "account_id,account_name,region,legal_entity,currency,segment,industry,created_date"),
+     "account_id,account_name,region,legal_entity,currency,segment,industry,created_date",
+     "account_id"),
     ("contracts", "STG_CRM", "CONTRACTS",
-     "contract_id,version_number,account_id,effective_start_date,effective_end_date,arr_amount,currency,seats,plan_tier,amendment_type,created_at,is_backdated,co_termination_group"),
+     "contract_id,version_number,account_id,effective_start_date,effective_end_date,arr_amount,currency,seats,plan_tier,amendment_type,created_at,is_backdated,co_termination_group",
+     "contract_id,version_number"),
     ("customer_master", "STG_CUSTOMER", "CUSTOMER_MASTER",
-     "account_id,version,billing_contact_name,billing_contact_email,tax_id,address_line1,city,region,legal_entity,updated_at"),
+     "account_id,version,billing_contact_name,billing_contact_email,tax_id,address_line1,city,region,legal_entity,updated_at",
+     "account_id,version"),
     ("fx_rates", "STG_FX", "FX_RATES",
-     "rate_date,base_currency,quote_currency,fx_rate"),
+     "rate_date,base_currency,quote_currency,fx_rate",
+     "rate_date,base_currency,quote_currency"),
 ]
 BILLING_TABLES = [
     ("invoices", "STG_BILLING", "INVOICES",
-     "invoice_id,contract_id,account_id,invoice_date,currency,amount"),
+     "invoice_id,contract_id,account_id,invoice_date,currency,amount",
+     "invoice_id"),
     ("invoice_line_items", "STG_BILLING", "INVOICE_LINE_ITEMS",
-     "invoice_line_id,invoice_id,description,quantity,unit_amount,amount"),
+     "invoice_line_id,invoice_id,description,quantity,unit_amount,amount",
+     "invoice_line_id"),
     ("credit_memos", "STG_BILLING", "CREDIT_MEMOS",
-     "credit_memo_id,invoice_id,account_id,issue_date,system_entry_date,currency,amount,reason"),
+     "credit_memo_id,invoice_id,account_id,issue_date,system_entry_date,currency,amount,reason",
+     "credit_memo_id"),
     ("payments", "STG_BILLING", "PAYMENTS",
-     "payment_id,invoice_id,account_id,payment_date,amount,currency"),
+     "payment_id,invoice_id,account_id,payment_date,amount,currency",
+     "payment_id"),
     ("gl_journal_entries", "STG_ERP", "GL_JOURNAL_ENTRIES",
-     "je_id,posting_date,gl_account,debit_credit,amount,currency,reference_id,je_type"),
+     "je_id,posting_date,gl_account,debit_credit,amount,currency,reference_id,je_type",
+     "je_id"),
 ]
 
 
 @task
-def load_table_if_present(run_date, name, stage, table, columns):
-    """PUT + COPY INTO one source's daily slice, if the generator produced
-    one for this date (empty slices simply aren't written -- see
+def load_table_if_present(run_date, name, stage, table, columns, key_columns):
+    """PUT + COPY INTO a staging table, then MERGE into RAW on key_columns,
+    for one source's daily slice -- if the generator produced one for this
+    date (empty slices simply aren't written -- see
     data_generator/generator/writer.py -- so a missing file is normal, not
     an error). Mapped once per source table via expand_kwargs below.
+
+    Loads via MERGE on an explicit natural key rather than a plain COPY INTO
+    the target table, because neither FORCE=TRUE nor Snowflake's own
+    load-history dedup make a retried/cleared task instance safe here:
+    confirmed live that re-PUTting the exact same local file with
+    OVERWRITE=TRUE gets a *different* MD5/ETag from Snowflake's internal
+    stage on every upload (true with or without AUTO_COMPRESS), so the
+    load-history "already loaded this file" check Snowflake normally uses to
+    skip a duplicate COPY INTO never matches -- every retry duplicated rows
+    in RAW regardless of FORCE. MERGE on key_columns sidesteps the file
+    identity question entirely and is idempotent by row instead.
 
     Parameter is `run_date`, not `ds` -- confirmed live that naming it `ds`
     breaks TaskFlow's @task decorator: `ds` is a reserved Airflow context
@@ -100,11 +124,34 @@ def load_table_if_present(run_date, name, stage, table, columns):
     database = hook.get_connection(SNOWFLAKE_CONN_ID).extra_dejson.get("database")
     stage_path = f"@{database}.RAW.{stage}/{run_date}/{name}/"
     hook.run(f"PUT file://{local_path} {stage_path} AUTO_COMPRESS=TRUE OVERWRITE=TRUE")
-    hook.run(
-        f"COPY INTO {database}.RAW.{table} ({columns}) "
-        f"FROM {stage_path} FILE_FORMAT=(FORMAT_NAME={database}.RAW.FF_CSV) "
-        f"PURGE=FALSE FORCE=TRUE"
-    )
+
+    # Not a TEMPORARY table: hook.run() opens and closes a brand-new
+    # connection on every call (see SnowflakeHook.run -- `with
+    # closing(self.get_conn())`), so a session-scoped TEMPORARY table
+    # created in one hook.run() call is already gone by the next one
+    # (confirmed live: "Table ... does not exist" on the COPY INTO
+    # immediately after CREATE TEMPORARY TABLE). Named per run_date+table so
+    # concurrent DAG runs for different dates can't collide; dropped at the
+    # end since it's a real object, not session-scoped.
+    tmp_table = f"{database}.RAW.{table}_LOAD_STG_{run_date.replace('-', '')}"
+    col_list = [c.strip() for c in columns.split(",")]
+    key_list = [c.strip() for c in key_columns.split(",")]
+    hook.run(f"CREATE OR REPLACE TRANSIENT TABLE {tmp_table} LIKE {database}.RAW.{table}")
+    try:
+        hook.run(
+            f"COPY INTO {tmp_table} ({columns}) "
+            f"FROM {stage_path} FILE_FORMAT=(FORMAT_NAME={database}.RAW.FF_CSV) "
+            f"PURGE=FALSE FORCE=TRUE"
+        )
+        merge_on = " AND ".join(f"t.{k} = s.{k}" for k in key_list)
+        hook.run(
+            f"MERGE INTO {database}.RAW.{table} t "
+            f"USING {tmp_table} s ON {merge_on} "
+            f"WHEN NOT MATCHED THEN INSERT ({columns}) "
+            f"VALUES ({', '.join(f's.{c}' for c in col_list)})"
+        )
+    finally:
+        hook.run(f"DROP TABLE IF EXISTS {tmp_table}")
     log.info("loaded %s -> %s.RAW.%s", name, database, table)
 
 
@@ -113,7 +160,7 @@ def _billing_feed_arrived(ds, **_):
     Returns False (not an exception) so the sensor keeps polling instead of
     failing outright -- an SLA miss is what should page someone, not a
     single failed poke."""
-    for name, _, _, _ in BILLING_TABLES:
+    for name, _, _, _, _ in BILLING_TABLES:
         if os.path.exists(f"{PROJECT_DIR}/data_generator/output/daily/{ds}/{name}/{name}.csv"):
             return True
     return False
@@ -171,15 +218,15 @@ with DAG(
     load_crm_tasks = load_table_if_present.override(
         task_id="load_crm_to_raw", outlets=[raw_crm_dataset]
     ).expand_kwargs([
-        {"run_date": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns}
-        for name, stage, table, columns in CRM_TABLES
+        {"run_date": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns, "key_columns": key_columns}
+        for name, stage, table, columns, key_columns in CRM_TABLES
     ])
 
     load_billing_tasks = load_table_if_present.override(
         task_id="load_billing_to_raw", outlets=[raw_billing_dataset]
     ).expand_kwargs([
-        {"run_date": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns}
-        for name, stage, table, columns in BILLING_TABLES
+        {"run_date": "{{ ds }}", "name": name, "stage": stage, "table": table, "columns": columns, "key_columns": key_columns}
+        for name, stage, table, columns, key_columns in BILLING_TABLES
     ])
 
     generate_data >> load_crm_tasks
