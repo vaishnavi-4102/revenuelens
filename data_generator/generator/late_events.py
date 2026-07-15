@@ -15,7 +15,14 @@ def inject_late_credit_memo(datasets: dict, as_of_date, cfg, days_back: int = 45
 
     inv = candidates.sample(n=1, random_state=int(rng.integers(0, 1_000_000))).iloc[0]
     new_row = {
-        "credit_memo_id": f"CM-DEMO-{len(existing) + 1:06d}",
+        # Includes as_of_date, not just len(existing): the latter is
+        # constant across every invocation (it's the full deterministic
+        # dataset's total row count, independent of --as-of), so two
+        # injections run on different days previously collided on the
+        # identical literal ID "CM-DEMO-001798" -- confirmed live, this
+        # silently discarded one session's injected row as a "duplicate"
+        # of an unrelated one from a different day during RAW cleanup.
+        "credit_memo_id": f"CM-DEMO-{as_of_date.isoformat()}-{len(existing) + 1:06d}",
         "invoice_id": inv["invoice_id"],
         "account_id": inv["account_id"],
         "issue_date": target_issue_date.date(),

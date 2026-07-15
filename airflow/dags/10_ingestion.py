@@ -91,7 +91,13 @@ def load_table_if_present(run_date, name, stage, table, columns):
         return
 
     hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
-    database = hook.database
+    # SnowflakeHook.database is only ever populated from a constructor kwarg
+    # (see SnowflakeHook.__init__), never automatically from the connection's
+    # own extra fields -- confirmed live: hook.database is None here even
+    # though hook.run() connects to the right database, producing literal
+    # "@None.RAW.<stage>" stage paths and a Snowflake "Database 'NONE' does
+    # not exist" error. Read it from the connection's extra instead.
+    database = hook.get_connection(SNOWFLAKE_CONN_ID).extra_dejson.get("database")
     stage_path = f"@{database}.RAW.{stage}/{run_date}/{name}/"
     hook.run(f"PUT file://{local_path} {stage_path} AUTO_COMPRESS=TRUE OVERWRITE=TRUE")
     hook.run(
@@ -148,7 +154,7 @@ with DAG(
             # revenuelens-python: the generator's isolated venv (pandas/
             # numpy/Faker), symlinked onto PATH by airflow/Dockerfile --
             # not Airflow's own Python, which doesn't have these deps.
-            "revenuelens-python main.py daily --as-of {{ ds }}"
+            "revenuelens-python main.py daily --as-of {{ ds }} --inject-late-credit-memo"
         ),
     )
 
