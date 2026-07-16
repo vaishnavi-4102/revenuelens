@@ -18,7 +18,17 @@ def generate_gl(invoices_df: pd.DataFrame, payments_df: pd.DataFrame, cfg) -> pd
         rows.append(_je(je_seq, inv["invoice_date"], REVENUE_ACCOUNT, "CREDIT", inv["amount"], inv["currency"], inv["invoice_id"], "AUTO_INVOICE")); je_seq += 1
         rows.append(_je(je_seq, inv["invoice_date"], AR_ACCOUNT, "DEBIT", inv["amount"], inv["currency"], inv["invoice_id"], "AUTO_INVOICE")); je_seq += 1
 
-    for _, pay in payments_df.iterrows():
+    # payments_df intentionally contains duplicate rows (same real-world
+    # payment written twice under two payment_ids -- see billing.py) to
+    # exercise stg_billing__payments' dedup logic downstream. Booking a JE
+    # pair per raw row would double-post those to the ledger, so dedupe on
+    # the same (invoice_id, payment_date, amount, currency) grain here --
+    # one economic event gets one JE pair, regardless of how many payment
+    # records represent it.
+    deduped_payments = payments_df.drop_duplicates(
+        subset=["invoice_id", "payment_date", "amount", "currency"]
+    )
+    for _, pay in deduped_payments.iterrows():
         rows.append(_je(je_seq, pay["payment_date"], CASH_ACCOUNT, "DEBIT", pay["amount"], pay["currency"], pay["invoice_id"], "AUTO_PAYMENT")); je_seq += 1
         rows.append(_je(je_seq, pay["payment_date"], AR_ACCOUNT, "CREDIT", pay["amount"], pay["currency"], pay["invoice_id"], "AUTO_PAYMENT")); je_seq += 1
 
